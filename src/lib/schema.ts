@@ -8,9 +8,26 @@ export const SlotSchema = z.object({
   preferred_resources: z.array(z.string()).optional(),
   quiz_score: z.number().int().min(0).max(100).optional(),
   recommended_start_stage: z.string().optional(),
+  quiz_status: z.enum(["pending", "in_progress", "completed", "skipped"]).optional(),
+  intent: z.string().optional(),
   notes: z.string().optional(),
 });
 export type Slots = z.infer<typeof SlotSchema>;
+
+export const AgentTypeSchema = z.enum(["none", "navigator", "diagnostic", "curriculum", "scheduler", "adjust"]);
+export type AgentType = z.infer<typeof AgentTypeSchema>;
+
+export const NavigatorIntentSchema = z.enum([
+  "collect_info",
+  "request_quiz",
+  "skip_quiz",
+  "start_outline",
+  "generate_plan",
+  "adjust_plan",
+  "change_goal",
+  "reset_session",
+]);
+export type NavigatorIntent = z.infer<typeof NavigatorIntentSchema>;
 
 export const ResourceSchema = z.object({
   title: z.string(),
@@ -57,13 +74,12 @@ export const PlanSchema = z.object({
 });
 export type Plan = z.infer<typeof PlanSchema>;
 
-export const ChatCollectResponseSchema = z.object({
+export const NavigatorResponseSchema = z.object({
   assistant_reply: z.string(),
   slot_updates: SlotSchema.partial().default({}),
-  state_ready: z.boolean(),
-  next_state_hint: z
-    .enum(["goal_focus", "level_check", "recap_confirm", "outline_draft"])
-    .optional(),
+  intent: NavigatorIntentSchema,
+  next_agent: AgentTypeSchema,
+  metadata: z.record(z.any()).optional(),
 });
 
 export const QuizQuestionSchema = z.object({
@@ -97,4 +113,43 @@ export const QuizGradeSchema = z.object({
 export const AdjustResponseSchema = z.object({
   updated_plan: PlanSchema,
   notes: z.array(z.string()).default([]),
+});
+
+export const QuizStateSchema = z.object({
+  status: z.enum(["idle", "awaiting_answers", "needs_grading", "completed", "skipped"]).default("idle"),
+  questions: z.array(QuizQuestionSchema).optional(),
+  answers: z.record(z.string()).optional(),
+  score: z.number().optional(),
+  level: z.enum(["beginner", "intermediate", "advanced"]).optional(),
+  recommended_start_stage: z.string().optional(),
+  misconceptions: z.array(z.string()).optional(),
+});
+
+export const SessionStateSchema = z.object({
+  slots: SlotSchema.partial().default({}),
+  quiz: QuizStateSchema.optional(),
+  outline: OutlineSchema.optional(),
+  plan: PlanSchema.optional(),
+  next_agent: AgentTypeSchema.optional(),
+  history: z.array(
+    z.object({
+      role: z.enum(["user", "assistant", "agent"]).default("assistant"),
+      agent: AgentTypeSchema.optional(),
+      content: z.string(),
+      timestamp: z.number().optional(),
+    }),
+  ).optional(),
+});
+export type SessionState = z.infer<typeof SessionStateSchema>;
+
+export const OrchestratorResponseSchema = z.object({
+  sessionId: z.string(),
+  state: SessionStateSchema,
+  messages: z.array(
+    z.object({
+      agent: AgentTypeSchema,
+      content: z.string(),
+    }),
+  ),
+  pending_actions: z.array(z.string()).default([]),
 });

@@ -15,41 +15,44 @@ const SYSTEM_PROMPT = `
 You are FlowLearn, an AI learning coach helping developers design personalized study plans.
 - Goal: guide the user through a conversational wizard, collect structured slots, and produce JSON outputs that downstream services can parse.
 - Style: friendly, concise, use Chinese unless the user switches language; avoid bullet lists longer than 3 items.
-- Always respect the current wizard state passed in "state_hint".
+- Always respect the current orchestrator state passed in the context.
 - When asked to emit JSON, respond with only valid JSON (no backticks, comments, or extra text).
 `.trim();
 
-export const buildChatCollectPrompt = ({
-  stateHint,
+export const buildNavigatorPrompt = ({
   slotsJson,
   historySnippet,
+  latestUserMessage,
 }: {
-  stateHint: string;
   slotsJson: string;
   historySnippet: string;
+  latestUserMessage: string;
 }) =>
   template([
     { name: "System", content: SYSTEM_PROMPT },
     {
       name: "Context",
       content: [
-        `- Current state: ${stateHint}`,
-        `- Slots (may be null): ${slotsJson}`,
-        `- Conversation excerpt: ${historySnippet}`,
+        `Current slots: ${slotsJson}`,
+        `Conversation excerpt: ${historySnippet || "无历史"}`,
+        `User message: ${latestUserMessage}`,
       ].join("\n"),
     },
     {
       name: "Instruction",
       content: `
-1. Ask ONE question that best progresses toward filling missing slots for this state.
-2. If the user just answered, acknowledge briefly and either ask the next question or mark the state as ready.
-3. When enough info is gathered for this state, set "state_ready" = true and suggest transition.
-Output JSON schema:
+Determine the user's current intent in the learning journey.
+- Update any slots that can be extracted from the new message.
+- Choose the next agent to run: navigator/diagnostic/curriculum/scheduler/adjust/none.
+- Valid intents: collect_info, request_quiz, skip_quiz, start_outline, generate_plan, adjust_plan, change_goal, reset_session.
+
+Return JSON:
 {
-  "assistant_reply": "对话自然语言",
-  "slot_updates": { ... only changed keys ... },
-  "state_ready": true/false,
-  "next_state_hint": "goal_focus|level_check|recap_confirm|outline_draft"
+  "assistant_reply": "...",
+  "slot_updates": { ... },
+  "intent": "collect_info|request_quiz|...",
+  "next_agent": "navigator|diagnostic|curriculum|scheduler|adjust|none",
+  "metadata": { "notes": "..." }
 }
       `.trim(),
     },

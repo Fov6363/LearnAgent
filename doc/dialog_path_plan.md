@@ -214,3 +214,14 @@ Return JSON:
   "notes": ["说明本次修改影响，如延长 3 天"]
 }
 ```
+
+## 8. 多 Agent 架构（更新）
+
+- **Orchestrator（Agent Hub）**：唯一对话入口 `/api/agent-hub`，接收用户自然语言与当前 session state，负责分配任务给子 Agent，并返回合并后的回复与 state patch。
+- **Navigator Agent**：提取槽位、判断意图、决定下一步调用的 Agent（diagnostic/curriculum/scheduler/adjust/none）。输出结构化 JSON（`assistant_reply`, `slot_updates`, `intent`, `next_agent`）。
+- **Diagnostic Agent**：负责小测生成与评分；依据 `quiz.status` 决定是生成题目还是评分，更新 `quiz` 子状态（`questions/answers/score`）。
+- **Curriculum Agent**：基于 slots（目标、时长、水平）生成三段式大纲，写入 `state.outline`。
+- **Scheduler Agent**：把大纲扩展为节点与每日任务；也承载计划调整（通过 `adjustInstruction` 触发 `buildAdjustPrompt`）。
+- **扩展性**：后续可加入 Resource Finder、Critic、Progress Tracker 等 Agent，只需在 Orchestrator 中注册 intent→agent 的映射；session state 通过 `state.history` 与 `state.next_agent` 追踪流程。
+
+前端仅需与 `/api/agent-hub` 对话，并根据返回的 `state` 更新 UI，即可获得多 agent 协作的结果。
