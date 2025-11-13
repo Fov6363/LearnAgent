@@ -21,17 +21,36 @@ type OrchestratorOutput = {
   messages: AgentMessage[];
 };
 
-export const orchestrate = async ({
-  sessionId,
-  message,
-  state,
-  adjustInstruction,
-}: OrchestratorInput): Promise<OrchestratorOutput> => {
+export type OrchestratorStreamEvent =
+  | { type: "agent_message"; agent: AgentType; content: string }
+  | { type: "state"; state: SessionState };
+
+export const orchestrate = async (
+  { sessionId, message, state, adjustInstruction }: OrchestratorInput,
+  emit?: (event: OrchestratorStreamEvent) => void,
+): Promise<OrchestratorOutput> => {
   let currentState = SessionStateSchema.parse(state ?? {});
   const responses: AgentMessage[] = [];
   const effectiveSessionId = sessionId ?? randomUUID();
+  const history = [...(currentState.history ?? [])];
+  currentState.history = history;
+
+  const emitState = () => {
+    emit?.({ type: "state", state: structuredClone(currentState) });
+  };
+
+  const pushAgentMessage = (agent: AgentType, content: string) => {
+    responses.push({ agent, content });
+    history.push({ role: "agent", agent, content });
+    currentState.history = history;
+    emit?.({ type: "agent_message", agent, content });
+  };
 
   if (message && message.trim()) {
+    history.push({ role: "user", content: message });
+    currentState.history = history;
+    emitState();
+
     const navigatorResult = await runNavigatorAgent({
       state: currentState,
       userMessage: message,
@@ -43,13 +62,15 @@ export const orchestrate = async ({
       next_agent: navigatorResult.nextAgent,
     };
 
-    responses.push({ agent: "navigator", content: navigatorResult.assistantReply });
+    pushAgentMessage("navigator", navigatorResult.assistantReply);
 
     if (navigatorResult.intent === "change_goal") {
       currentState = {
         slots: navigatorResult.slotUpdates,
         quiz: { status: "idle" },
+        history,
       } as SessionState;
+      emitState();
     }
   }
 
@@ -61,16 +82,17 @@ export const orchestrate = async ({
         slots: currentState.slots as Slots,
       });
       currentState = { ...currentState, quiz: diag.quizState, next_agent: "none" };
-      diag.messages.forEach((content) => responses.push({ agent: "diagnostic", content }));
+      diag.messages.forEach((content) => pushAgentMessage("diagnostic", content));
+      emitState();
       break;
     }
     case "curriculum": {
       const curriculum = await runCurriculumAgent({
-        state: currentState,
         slots: currentState.slots as Slots,
       });
       currentState = { ...currentState, outline: curriculum.outline, next_agent: "none" };
-      curriculum.messages.forEach((content) => responses.push({ agent: "curriculum", content }));
+      curriculum.messages.forEach((content) => pushAgentMessage("curriculum", content));
+      emitState();
       break;
     }
     case "scheduler": {
@@ -81,12 +103,13 @@ export const orchestrate = async ({
         adjustInstruction,
       });
       currentState = { ...currentState, plan: scheduler.plan, next_agent: "none" };
-      scheduler.messages.forEach((content) => responses.push({ agent: "scheduler", content }));
+      scheduler.messages.forEach((content) => pushAgentMessage("scheduler", content));
+      emitState();
       break;
     }
     case "adjust": {
       if (!adjustInstruction) {
-        responses.push({ agent: "adjust", content: "请提供调整需求。" });
+        pushAgentMessage("adjust", "请提供调整需求。");
         break;
       }
       const scheduler = await runSchedulerAgent({
@@ -96,18 +119,15 @@ export const orchestrate = async ({
         adjustInstruction,
       });
       currentState = { ...currentState, plan: scheduler.plan, next_agent: "none" };
-      scheduler.messages.forEach((content) => responses.push({ agent: "adjust", content }));
+      scheduler.messages.forEach((content) => pushAgentMessage("adjust", content));
+      emitState();
       break;
     }
     default:
       break;
   }
 
-  currentState.history = [
-    ...(currentState.history ?? []),
-    ...(message ? [{ role: "user", content: message }] : []),
-    ...responses.map((r) => ({ role: "agent", agent: r.agent, content: r.content })),
-  ];
+  emitState();
 
   return {
     sessionId: effectiveSessionId,
